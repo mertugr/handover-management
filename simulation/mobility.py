@@ -70,7 +70,7 @@ class MobileUser:
 
         if dist_wp <= step_dist:
             self.position = self._waypoint.copy()
-            if self._rng.random() < PAUSE_PROB:
+            if self._rng.random_sample() < PAUSE_PROB:
                 self._paused    = True
                 self._pause_rem = self._rng.uniform(MIN_PAUSE_S, MAX_PAUSE_S)
             else:

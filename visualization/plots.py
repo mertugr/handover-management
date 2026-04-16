@@ -91,9 +91,11 @@ def plot_rssi_over_time(rssi_matrix: np.ndarray, served_thr: np.ndarray):
 
     prev, start = served_thr[0], 0
     for t in range(1, T):
-        if served_thr[t] != prev or t == T - 1:
+        if served_thr[t] != prev:
             ax.axvspan(start, t, alpha=0.12, color=CELL_COLOURS[prev])
             start, prev = t, served_thr[t]
+    # Close out the final run so the last time step is shaded too
+    ax.axvspan(start, T, alpha=0.12, color=CELL_COLOURS[prev])
 
     ax.set_ylabel("RSSI (dBm)")
     ax.set_xlabel("Time Step (s)")

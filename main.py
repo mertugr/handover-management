@@ -139,6 +139,13 @@ def main():
 
     np.random.seed(RANDOM_SEED)
 
+    # Validate --plot-user so step4 never receives None
+    effective_users = max(1, min(args.users, NUM_USERS))
+    if not (0 <= args.plot_user < effective_users):
+        print(f"[WARN] --plot-user={args.plot_user} out of range "
+              f"[0, {effective_users}); clamping to 0")
+        args.plot_user = 0
+
     df = step1_generate_data(args.regenerate)
 
     thr_log, served_thr, true_cells, rssi_matrix, total_steps, plot_result = \

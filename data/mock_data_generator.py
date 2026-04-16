@@ -5,6 +5,8 @@ position, speed, direction, RSSI from all 9 cells, and the optimal cell
 at each time step. Results are cached to data/traces.csv.
 """
 
+import hashlib
+import json
 import os
 import numpy as np
 import pandas as pd
@@ -18,6 +20,21 @@ RSSI_COLS  = [f"rssi_{i}"       for i in range(NUM_CELLS)]
 TREND_COLS = [f"rssi_trend_{i}" for i in range(NUM_CELLS)]
 
 SAVE_PATH = os.path.join(os.path.dirname(__file__), "traces.csv")
+META_PATH = SAVE_PATH + ".meta.json"
+
+
+def _config_fingerprint() -> str:
+    """Stable hash of all knobs that affect the generated dataset."""
+    payload = {
+        "NUM_USERS":   NUM_USERS,
+        "NUM_STEPS":   NUM_STEPS,
+        "BURN_IN":     BURN_IN,
+        "LOOKAHEAD":   LOOKAHEAD,
+        "NUM_CELLS":   NUM_CELLS,
+        "RANDOM_SEED": RANDOM_SEED,
+    }
+    blob = json.dumps(payload, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
 
 
 def _simulate_user(uid: int) -> list[dict]:
@@ -94,14 +111,33 @@ def generate_dataset(save: bool = True) -> pd.DataFrame:
 
     if save:
         df.to_csv(SAVE_PATH, index=False)
+        with open(META_PATH, "w") as f:
+            json.dump({"fingerprint": _config_fingerprint()}, f)
         print(f"[DataGen] Saved to {SAVE_PATH}")
 
     return df
 
 
 def load_or_generate(force_regenerate: bool = False) -> pd.DataFrame:
-    """Load cached traces.csv if it exists, otherwise generate it."""
+    """Load cached traces.csv if it exists, otherwise generate it.
+
+    The cache is invalidated automatically when any config constant that
+    affects the dataset shape (NUM_USERS, NUM_STEPS, BURN_IN, LOOKAHEAD,
+    NUM_CELLS, RANDOM_SEED) changes.
+    """
     if not force_regenerate and os.path.exists(SAVE_PATH):
-        print(f"[DataGen] Loading cached dataset ...")
-        return pd.read_csv(SAVE_PATH)
+        cached_fp = None
+        if os.path.exists(META_PATH):
+            try:
+                with open(META_PATH) as f:
+                    cached_fp = json.load(f).get("fingerprint")
+            except (OSError, ValueError):
+                cached_fp = None
+
+        if cached_fp == _config_fingerprint():
+            print(f"[DataGen] Loading cached dataset ...")
+            return pd.read_csv(SAVE_PATH)
+
+        print("[DataGen] Config changed since last run - regenerating dataset")
+
     return generate_dataset(save=True)
