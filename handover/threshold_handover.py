@@ -17,11 +17,13 @@ class ThresholdHandoverController:
         self.hysteresis   = hysteresis
         self.ttt          = ttt
         self.current_cell = None
+        self.user_id      = None
         self.log: list[dict] = []
         self._ttt_counters: dict[int, int] = {}
 
-    def reset(self, initial_cell: int = 0):
+    def reset(self, initial_cell: int = 0, user_id=None):
         self.current_cell  = initial_cell
+        self.user_id       = user_id
         self.log           = []
         self._ttt_counters = {}
 
@@ -53,6 +55,7 @@ class ThresholdHandoverController:
 
             if self._ttt_counters[best_cand] >= self.ttt:
                 self.log.append({
+                    "user_id":      self.user_id,
                     "time":         t,
                     "from_cell":    self.current_cell,
                     "to_cell":      best_cand,

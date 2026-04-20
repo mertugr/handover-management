@@ -8,8 +8,11 @@ import numpy as np
 from dataclasses import dataclass, asdict
 
 PING_PONG_WINDOW_S     = 10   # handback within this many seconds counts as ping-pong
-INTERRUPTION_MS_PER_HO = 50  # estimated interruption per handover (ms)
-UNNECESSARY_GAIN_DB    = 1.0  # RSSI gain below this threshold = unnecessary HO
+INTERRUPTION_MS_PER_HO = 50   # estimated interruption per handover (ms)
+# A handover whose RSSI gain barely exceeds the 3 dB baseline hysteresis was
+# likely triggered by shadowing noise (sigma = 8 dB) rather than a real move,
+# so any HO with gain below this threshold is flagged as unnecessary.
+UNNECESSARY_GAIN_DB    = 5.0
 
 
 @dataclass
@@ -41,11 +44,16 @@ def compute_metrics(log: list[dict], total_steps: int,
     m.ho_rate_per_100_steps = (m.total_handovers / total_steps) * 100.0
     m.total_interruption_ms = m.total_handovers * INTERRUPTION_MS_PER_HO
 
-    # Ping-pong: handback to previous cell within the time window
+    # Ping-pong: handback to previous cell within the time window.
+    # Logs from multiple users are concatenated, so we must skip pairs that
+    # cross user boundaries (otherwise negative time diffs pass the check and
+    # cause false positives).
     for i in range(1, len(log)):
         prev, curr = log[i - 1], log[i]
-        if (curr["to_cell"] == prev["from_cell"]
-                and (curr["time"] - prev["time"]) <= PING_PONG_WINDOW_S):
+        if prev.get("user_id") != curr.get("user_id"):
+            continue
+        dt = curr["time"] - prev["time"]
+        if curr["to_cell"] == prev["from_cell"] and 0 < dt <= PING_PONG_WINDOW_S:
             m.ping_pong_count += 1
 
     if m.total_handovers > 0:

@@ -51,7 +51,7 @@ def simulate_single_user(df, user_id):
     trajectory  = user_df[["x", "y"]].values
 
     thr_ctrl = ThresholdHandoverController()
-    thr_ctrl.reset(initial_cell=int(true_cells[0]))
+    thr_ctrl.reset(initial_cell=int(true_cells[0]), user_id=int(user_id))
     served_thr = np.zeros(T, dtype=int)
     for t in range(T):
         served_thr[t], _ = thr_ctrl.process_step(t, rssi_matrix[t])
@@ -139,11 +139,12 @@ def main():
 
     np.random.seed(RANDOM_SEED)
 
-    # Validate --plot-user so step4 never receives None
-    effective_users = max(1, min(args.users, NUM_USERS))
-    if not (0 <= args.plot_user < effective_users):
+    # Clamp --users into a valid range, then validate --plot-user against it
+    # so step2 never produces an empty batch and step4 never receives None.
+    args.users = max(1, min(args.users, NUM_USERS))
+    if not (0 <= args.plot_user < args.users):
         print(f"[WARN] --plot-user={args.plot_user} out of range "
-              f"[0, {effective_users}); clamping to 0")
+              f"[0, {args.users}); clamping to 0")
         args.plot_user = 0
 
     df = step1_generate_data(args.regenerate)
