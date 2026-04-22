@@ -50,10 +50,10 @@ THR_HYSTERESIS_DB = 3.0  # dB margin required to trigger handover
 THR_TTT_STEPS     = 3    # consecutive steps condition must hold (TTT)
 
 # ML controller
-ML_CONFIDENCE_THRESHOLD = 0.55  # minimum prediction confidence to trigger HO
-ML_COOLDOWN_STEPS       = 8     # steps blocked after a handover
-ML_MIN_GAIN_DB          = 2.0   # minimum RSSI gain required (dB)
-ML_BOUNCEBACK_WINDOW    = 15    # steps before returning to previous cell is allowed
+ML_CONFIDENCE_THRESHOLD = 0.60  # minimum prediction confidence to trigger HO
+ML_COOLDOWN_STEPS       = 10    # steps blocked after a handover
+ML_MIN_GAIN_DB          = 4.0   # minimum RSSI gain required (dB)
+ML_BOUNCEBACK_WINDOW    = 20    # steps before returning to previous cell is allowed
 
 # Train / val / test split
 SPLIT_TEST_SIZE = 0.20

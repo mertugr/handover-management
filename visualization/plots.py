@@ -2,11 +2,13 @@
 Visualisation module. Saves all plots as PNG files to results/.
 
 Plots:
-  01_cell_grid        - base station layout and sample user trajectory
-  02_rssi_over_time   - RSSI signals over time with serving cell shading
-  03_handover_timeline - serving cell vs optimal cell over time
-  04_metric_comparison - bar chart of controller metrics
-  05_rssi_heatmap     - spatial RSSI coverage for one base station
+  01_cell_grid            - base station layout and ML-chosen serving cell along trajectory
+  02_rssi_over_time       - RSSI signals over time, with serving-cell shading for both controllers
+  03_handover_timeline    - optimal vs threshold vs ML serving cell over time
+  04_metric_comparison    - grouped bar chart of Threshold vs ML metrics
+  05_rssi_heatmap         - spatial RSSI coverage for one base station
+  06_confusion_matrix     - Random Forest test-set confusion matrix
+  07_feature_importance   - Random Forest feature importances
 """
 
 import os
@@ -77,51 +79,63 @@ def plot_cell_grid(trajectory_xy: Optional[np.ndarray] = None,
     _savefig("01_cell_grid", fig)
 
 
-def plot_rssi_over_time(rssi_matrix: np.ndarray, served_thr: np.ndarray):
-    """Plot RSSI signals over time with serving cell shading."""
+def _shade_serving(ax, served: np.ndarray, T: int):
+    """Shade the background of an axis with the colour of the serving cell."""
+    prev, start = served[0], 0
+    for t in range(1, T):
+        if served[t] != prev:
+            ax.axvspan(start, t, alpha=0.12, color=CELL_COLOURS[prev])
+            start, prev = t, served[t]
+    ax.axvspan(start, T, alpha=0.12, color=CELL_COLOURS[prev])
+
+
+def plot_rssi_over_time(rssi_matrix: np.ndarray,
+                        served_thr: np.ndarray,
+                        served_ml:  np.ndarray):
+    """Plot RSSI signals over time; two stacked panels for threshold and ML."""
     T      = len(rssi_matrix)
     t_axis = np.arange(T)
 
-    fig, ax = plt.subplots(figsize=(13, 4))
-    fig.suptitle("RSSI Over Time – Threshold Controller", fontsize=13, fontweight="bold")
+    fig, axes = plt.subplots(2, 1, figsize=(13, 7), sharex=True)
+    fig.suptitle("RSSI Over Time – Threshold vs ML Handover",
+                 fontsize=13, fontweight="bold")
 
-    for i in range(NUM_CELLS):
-        ax.plot(t_axis, rssi_matrix[:, i],
-                color=CELL_COLOURS[i], linewidth=0.7, alpha=0.6, label=f"Cell {i}")
+    for ax, served, title in zip(axes, [served_thr, served_ml],
+                                 ["Threshold Baseline", "ML-Based"]):
+        for i in range(NUM_CELLS):
+            ax.plot(t_axis, rssi_matrix[:, i],
+                    color=CELL_COLOURS[i], linewidth=0.7, alpha=0.6, label=f"Cell {i}")
+        _shade_serving(ax, served, T)
+        ax.set_ylabel("RSSI (dBm)")
+        ax.set_title(title, fontsize=10)
+        ax.set_ylim(-120, -30)
+        ax.grid(True, linewidth=0.4, alpha=0.5)
 
-    prev, start = served_thr[0], 0
-    for t in range(1, T):
-        if served_thr[t] != prev:
-            ax.axvspan(start, t, alpha=0.12, color=CELL_COLOURS[prev])
-            start, prev = t, served_thr[t]
-    # Close out the final run so the last time step is shaded too
-    ax.axvspan(start, T, alpha=0.12, color=CELL_COLOURS[prev])
-
-    ax.set_ylabel("RSSI (dBm)")
-    ax.set_xlabel("Time Step (s)")
-    ax.set_ylim(-120, -30)
-    ax.grid(True, linewidth=0.4, alpha=0.5)
-
+    axes[-1].set_xlabel("Time Step (s)")
     handles = [Line2D([0], [0], color=CELL_COLOURS[i], linewidth=2, label=f"Cell {i}")
                for i in range(NUM_CELLS)]
-    fig.legend(handles=handles, loc="right", fontsize=8, title="Cell", title_fontsize=9)
-    plt.tight_layout(rect=[0, 0, 0.88, 1])
+    fig.legend(handles=handles, loc="right", fontsize=8,
+               title="Cell", title_fontsize=9)
+    plt.tight_layout(rect=[0, 0, 0.88, 0.96])
     _savefig("02_rssi_over_time", fig)
 
 
-def plot_handover_timeline(served_thr: np.ndarray, true_cells: np.ndarray):
-    """Plot serving cell assignment over time vs ground truth."""
+def plot_handover_timeline(served_thr: np.ndarray,
+                           served_ml:  np.ndarray,
+                           true_cells: np.ndarray):
+    """Plot serving cell assignment over time for optimal/threshold/ML."""
     T      = len(true_cells)
     t_axis = np.arange(T)
 
-    fig, axes = plt.subplots(2, 1, figsize=(13, 5), sharex=True)
-    fig.suptitle("Serving Cell Assignment Over Time", fontsize=13, fontweight="bold")
+    fig, axes = plt.subplots(3, 1, figsize=(13, 7), sharex=True)
+    fig.suptitle("Serving Cell Assignment Over Time",
+                 fontsize=13, fontweight="bold")
 
     for ax, data, label, colour in zip(
             axes,
-            [true_cells, served_thr],
-            ["Optimal (Ground Truth)", "Threshold Baseline"],
-            ["gray", "tomato"]):
+            [true_cells, served_thr, served_ml],
+            ["Optimal (Ground Truth)", "Threshold Baseline", "ML-Based"],
+            ["gray", "tomato", "steelblue"]):
         ax.step(t_axis, data, where="post", color=colour, linewidth=1.5)
         ax.set_ylabel("Cell ID")
         ax.set_yticks(range(NUM_CELLS))
@@ -133,33 +147,41 @@ def plot_handover_timeline(served_thr: np.ndarray, true_cells: np.ndarray):
     _savefig("03_handover_timeline", fig)
 
 
-def plot_metric_comparison(thr_metrics):
-    """Bar chart of controller performance metrics."""
+def plot_metric_comparison(thr_metrics, ml_metrics):
+    """Grouped bar chart comparing Threshold and ML metrics."""
     metric_pairs = [
-        ("Ping-Pong\nCount",        "ping_pong_count",       ""),
-        ("Unnecessary\nHO Count",   "unnecessary_count",     ""),
-        ("Total\nInterruption (ms)","total_interruption_ms", "ms"),
-        ("HO Rate\n(per 100 steps)","ho_rate_per_100_steps", ""),
-        ("Success\nRate (%)",       "success_rate_pct",      "%"),
+        ("Ping-Pong\nCount",         "ping_pong_count"),
+        ("Unnecessary\nHO Count",    "unnecessary_count"),
+        ("Total\nInterruption (ms)", "total_interruption_ms"),
+        ("HO Rate\n(per 100 steps)", "ho_rate_per_100_steps"),
+        ("Success\nRate (%)",        "success_rate_pct"),
     ]
     labels   = [m[0] for m in metric_pairs]
     thr_vals = [getattr(thr_metrics, m[1]) for m in metric_pairs]
+    ml_vals  = [getattr(ml_metrics,  m[1]) for m in metric_pairs]
 
-    fig, ax = plt.subplots(figsize=(11, 5))
-    bars = ax.bar(np.arange(len(labels)), thr_vals, 0.5,
-                  label="Threshold", color="tomato", alpha=0.85)
-    ax.set_xticks(np.arange(len(labels)))
+    x     = np.arange(len(labels))
+    width = 0.38
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    bars_t = ax.bar(x - width / 2, thr_vals, width,
+                    label="Threshold", color="tomato", alpha=0.85)
+    bars_m = ax.bar(x + width / 2, ml_vals,  width,
+                    label="ML-Based",  color="steelblue", alpha=0.85)
+
+    ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=10)
     ax.set_ylabel("Value")
-    ax.set_title("Threshold Handover – Performance Metrics",
+    ax.set_title("Threshold vs ML Handover – Performance Metrics",
                  fontsize=12, fontweight="bold")
     ax.legend(fontsize=10)
     ax.grid(axis="y", linewidth=0.4, alpha=0.5)
 
-    for bar in bars:
-        h = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width() / 2, h + 0.3,
-                f"{h:.1f}", ha="center", va="bottom", fontsize=8)
+    for bars in (bars_t, bars_m):
+        for bar in bars:
+            h = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width() / 2, h + 0.3,
+                    f"{h:.1f}", ha="center", va="bottom", fontsize=7)
 
     plt.tight_layout()
     _savefig("04_metric_comparison", fig)
@@ -194,3 +216,55 @@ def plot_rssi_heatmap(cell_id: int = 4):
     ax.set_ylabel("y (m)")
     plt.tight_layout()
     _savefig("05_rssi_heatmap", fig)
+
+
+def plot_confusion_matrix(cm: np.ndarray, class_labels: list[int]):
+    """Heatmap of the Random Forest test-set confusion matrix."""
+    row_sum = cm.sum(axis=1, keepdims=True)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cm_norm = np.where(row_sum > 0, cm / row_sum, 0.0)
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    im = ax.imshow(cm_norm, cmap="Blues", vmin=0, vmax=1)
+    plt.colorbar(im, ax=ax, label="Row-normalised fraction")
+
+    ax.set_xticks(range(len(class_labels)))
+    ax.set_yticks(range(len(class_labels)))
+    ax.set_xticklabels(class_labels, fontsize=8)
+    ax.set_yticklabels(class_labels, fontsize=8)
+    ax.set_xlabel("Predicted next cell")
+    ax.set_ylabel("True next cell")
+    ax.set_title("Random Forest – Confusion Matrix (test set)",
+                 fontsize=11, fontweight="bold")
+
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            val = cm[i, j]
+            if val > 0:
+                colour = "white" if cm_norm[i, j] > 0.5 else "black"
+                ax.text(j, i, f"{int(val)}", ha="center", va="center",
+                        fontsize=7, color=colour)
+
+    plt.tight_layout()
+    _savefig("06_confusion_matrix", fig)
+
+
+def plot_feature_importance(feature_names: list[str],
+                            importances:  np.ndarray):
+    """Horizontal bar chart of Random Forest feature importances."""
+    order = np.argsort(importances)
+    names_sorted = [feature_names[i] for i in order]
+    vals_sorted  = importances[order]
+
+    fig, ax = plt.subplots(figsize=(8, max(4, len(feature_names) * 0.25)))
+    ax.barh(np.arange(len(names_sorted)), vals_sorted,
+            color="seagreen", alpha=0.85)
+    ax.set_yticks(np.arange(len(names_sorted)))
+    ax.set_yticklabels(names_sorted, fontsize=8)
+    ax.set_xlabel("Importance")
+    ax.set_title("Random Forest – Feature Importance",
+                 fontsize=11, fontweight="bold")
+    ax.grid(axis="x", linewidth=0.4, alpha=0.5)
+
+    plt.tight_layout()
+    _savefig("07_feature_importance", fig)
