@@ -41,19 +41,37 @@ class MLHandoverController:
         self.user_id                  = None
         self.log: list[dict]          = []
 
-        self._prev_rssi:         np.ndarray | None = None
         self._last_ho_time:      int   = -10 ** 9
         self._last_source_cell:  int   = -1
         self._last_source_time:  int   = -10 ** 9
+
+        # Filled in by precompute(); required before process_step().
+        self._cached_preds: np.ndarray | None = None
+        self._cached_confs: np.ndarray | None = None
 
     def reset(self, initial_cell: int = 0, user_id=None):
         self.current_cell       = initial_cell
         self.user_id            = user_id
         self.log                = []
-        self._prev_rssi         = None
         self._last_ho_time      = -10 ** 9
         self._last_source_cell  = -1
         self._last_source_time  = -10 ** 9
+        self._cached_preds      = None
+        self._cached_confs      = None
+
+    def precompute(self, speeds: np.ndarray, directions_rad: np.ndarray,
+                   rssi_matrix: np.ndarray) -> None:
+        """Batch-predict next-cell + confidence for the full user trace.
+
+        Must be called after reset() and before the first process_step(). RF
+        per-row inference is ~14 ms; one batch call is ~100x faster, with
+        bit-identical results because the mobility trace is independent of
+        handover decisions. RF-specific optimization — other controllers
+        (threshold, RL) do not need an analogue.
+        """
+        self._cached_preds, self._cached_confs = self.predictor.predict_batch(
+            speeds, directions_rad, rssi_matrix
+        )
 
     def process_step(self, t: int, speed: float, direction_rad: float,
                      rssi: np.ndarray) -> tuple[int, bool]:
@@ -61,17 +79,17 @@ class MLHandoverController:
         Evaluate the ML handover decision at step t.
         Returns (serving_cell, handover_occurred).
         """
+        if self._cached_preds is None:
+            raise RuntimeError(
+                "MLHandoverController.precompute() must be called after "
+                "reset() and before the first process_step()."
+            )
+
         if self.current_cell is None:
             self.current_cell = int(np.argmax(rssi))
 
-        rssi_prev = self._prev_rssi if self._prev_rssi is not None else rssi
-
-        pred_cell, conf, _ = self.predictor.predict_next_cell(
-            speed         = speed,
-            direction_rad = direction_rad,
-            rssi          = rssi,
-            rssi_prev     = rssi_prev,
-        )
+        pred_cell = int(self._cached_preds[t])
+        conf      = float(self._cached_confs[t])
 
         ho_occurred = False
 
@@ -100,5 +118,4 @@ class MLHandoverController:
                 self._last_ho_time     = t
                 ho_occurred            = True
 
-        self._prev_rssi = rssi.copy()
         return self.current_cell, ho_occurred

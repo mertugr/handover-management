@@ -86,6 +86,8 @@ def simulate_single_user(df, user_id, predictor: HandoverPredictor):
 
     ml_ctrl = MLHandoverController(predictor)
     ml_ctrl.reset(initial_cell=initial_cell, user_id=int(user_id))
+    # Batch RF inference for the whole trace (~100x faster than per-step).
+    ml_ctrl.precompute(speeds, directions, rssi_matrix)
     served_ml = np.zeros(T, dtype=int)
     for t in range(T):
         served_ml[t], _ = ml_ctrl.process_step(
