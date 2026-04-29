@@ -11,6 +11,7 @@ import os
 import numpy as np
 import pandas as pd
 
+import config
 from simulation.mobility  import MobileUser
 from simulation.rssi      import rssi_all_cells, best_cell_by_rssi
 from simulation.cell_grid import NUM_CELLS
@@ -22,17 +23,30 @@ TREND_COLS = [f"rssi_trend_{i}" for i in range(NUM_CELLS)]
 SAVE_PATH = os.path.join(os.path.dirname(__file__), "traces.csv")
 META_PATH = SAVE_PATH + ".meta.json"
 
+# Constants whose value changes the simulated traces. Touching any of these
+# must invalidate the cached dataset; controller / model / split knobs are
+# excluded so tweaking them doesn't trigger a slow regeneration.
+_FINGERPRINT_KEYS = (
+    "RANDOM_SEED",
+    # Grid geometry
+    "GRID_ROWS", "GRID_COLS", "GRID_WIDTH", "GRID_HEIGHT",
+    # Mobility model
+    "MIN_SPEED_MPS", "MAX_SPEED_MPS", "TIME_STEP_S",
+    "PAUSE_PROB", "MIN_PAUSE_S", "MAX_PAUSE_S",
+    "DIR_NOISE_STD", "MARGIN",
+    # RSSI / path-loss
+    "P_TX_DBM", "CABLE_LOSS_DB", "ANTENNA_GAIN",
+    "PL_CONST", "PL_SLOPE", "SHADOWING_STD",
+    "MIN_RSSI", "MAX_RSSI", "MIN_DISTANCE",
+    # Dataset shape
+    "NUM_USERS", "NUM_STEPS", "BURN_IN", "LOOKAHEAD",
+)
+
 
 def _config_fingerprint() -> str:
-    """Stable hash of all knobs that affect the generated dataset."""
-    payload = {
-        "NUM_USERS":   NUM_USERS,
-        "NUM_STEPS":   NUM_STEPS,
-        "BURN_IN":     BURN_IN,
-        "LOOKAHEAD":   LOOKAHEAD,
-        "NUM_CELLS":   NUM_CELLS,
-        "RANDOM_SEED": RANDOM_SEED,
-    }
+    """Stable hash of every config knob that affects the generated dataset."""
+    payload = {k: getattr(config, k) for k in _FINGERPRINT_KEYS}
+    payload["NUM_CELLS"] = NUM_CELLS  # derived from GRID_ROWS * GRID_COLS
     blob = json.dumps(payload, sort_keys=True).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
 

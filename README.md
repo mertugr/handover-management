@@ -136,13 +136,13 @@ time (50 ms/HO), and average serving-cell RSSI.
 
 ## Sample Results (20 users, 14 000 steps)
 
-| Metric                     | Threshold | ML     | Δ        |
-|----------------------------|-----------|--------|----------|
+| Metric                     | Threshold | ML         | Δ            |
+|----------------------------|-----------|------------|--------------|
 | Success rate (%)           | 83.52     | **90.39**  | **+6.87 pp** |
 | Ping-pong count            | 20        | **0**      | **−100 %**   |
 | Unnecessary handovers      | 17        | **11**     | **−35 %**    |
-| Total handovers            | 205       | 204    | tie      |
-| Interruption time (ms)     | 10 250    | 10 200 | tie      |
+| Total handovers            | 205       | 204        | −1 (≈ tie)   |
+| Interruption time (ms)     | 10 250    | 10 200     | −50 (≈ tie)  |
 | Avg serving RSSI (dBm)     | −55.50    | **−55.20** | **+0.30 dB** |
 
 Random Forest test accuracy: **76.4 %**, macro F1: **0.764**.
@@ -164,6 +164,30 @@ improving the success rate and maintaining the average serving RSSI.
 | `05_rssi_heatmap.png`          | Spatial RSSI coverage for a single base station             |
 | `06_confusion_matrix.png`      | RF test-set confusion matrix                                |
 | `07_feature_importance.png`    | RF feature importance ranking                               |
+
+---
+
+## Deviations from the Original Proposal
+
+The original project proposal specifies the feature set as
+*"current cell ID, user speed, movement direction, and RSSI values"*.
+The implementation diverges in two intentional ways:
+
+- **`current_cell` is dropped from the feature vector.** During training the
+  recorded `current_cell` is always the noiseless optimal cell, while at
+  inference the controller may be serving a stale cell. Including the column
+  teaches the Random Forest to echo it and the controller refuses to hand
+  over even when it should. The 9-element RSSI vector already encodes which
+  cell is strongest, so removing `current_cell` strictly improves behavior.
+  See [`ml/features.py`](ml/features.py) for the full rationale.
+- **RSSI trend (Δ from the previous step) is added.** Nine extra features
+  give the model directional information about which neighbours are rising
+  or fading, which is essential for *proactive* handover. Final layout: 21
+  features (`speed`, `dir_sin`, `dir_cos`, 9× `rssi`, 9× `rssi_trend`).
+
+The Microsoft GeoLife GPS dataset mentioned in the proposal as an *optional*
+validation source is not currently integrated; only synthetic Random
+Waypoint traces are used. See *Future Work* below.
 
 ---
 
