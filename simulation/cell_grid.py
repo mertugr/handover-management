@@ -23,22 +23,7 @@ BASE_STATIONS = np.array([
     [2500.0, 2500.0],  # Cell 8
 ], dtype=np.float64)
 
-CELL_LABELS = [f"Cell-{i}" for i in range(NUM_CELLS)]
-
 
 def cell_position(cell_id: int) -> np.ndarray:
     """Return the (x, y) position of the given base station."""
     return BASE_STATIONS[cell_id]
-
-
-def nearest_cell(position: np.ndarray) -> int:
-    """Return the cell ID closest to the given position (Euclidean distance)."""
-    dists = np.linalg.norm(BASE_STATIONS - position, axis=1)
-    return int(np.argmin(dists))
-
-
-def get_neighbours(cell_id: int, max_dist: float = ISD * 1.5) -> list:
-    """Return cell IDs within max_dist metres of the given cell."""
-    origin = BASE_STATIONS[cell_id]
-    return [i for i, pos in enumerate(BASE_STATIONS)
-            if i != cell_id and np.linalg.norm(pos - origin) <= max_dist]

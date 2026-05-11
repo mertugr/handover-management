@@ -11,7 +11,8 @@ Steps:
 Command-line flags:
   --regenerate   force re-generation of traces (ignore cache)
   --retrain      force re-training of the Random Forest model
-  --users N      number of users to evaluate (default 20)
+  --users N      number of users to evaluate (default 20). Use --users 60 for
+                 the full dataset (slower; includes held-out test users).
   --plot-user ID user whose trace is shown in the timeline plots (default 0)
 """
 
@@ -22,8 +23,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from config import RANDOM_SEED
-from data.mock_data_generator    import load_or_generate, NUM_USERS
+from config import RANDOM_SEED, NUM_USERS
+from data.mock_data_generator    import load_or_generate
 from handover.threshold_handover import ThresholdHandoverController
 from handover.ml_handover        import MLHandoverController
 from evaluation.metrics          import compute_metrics
@@ -69,7 +70,10 @@ def simulate_single_user(df, user_id, predictor: HandoverPredictor):
 
     rssi_cols   = [f"rssi_{i}" for i in range(NUM_CELLS)]
     rssi_matrix = user_df[rssi_cols].values
-    true_cells  = user_df["current_cell"].values.astype(int)
+    # Ground truth for evaluation: noiseless best-by-RSSI cell at each step.
+    # (`current_cell` in the dataset is the controller-served cell — used as an
+    # RF input feature, not as a label.)
+    true_cells  = user_df["optimal_cell"].values.astype(int)
     trajectory  = user_df[["x", "y"]].values
     speeds      = user_df["speed"].values
     dir_sin     = user_df["direction_sin"].values
@@ -210,7 +214,8 @@ def main():
                         help="force re-generation of synthetic traces")
     parser.add_argument("--retrain",    action="store_true",
                         help="force re-training of the Random Forest model")
-    parser.add_argument("--users",      type=int, default=20)
+    parser.add_argument("--users",      type=int, default=20,
+                        help="number of users to evaluate (default: 20)")
     parser.add_argument("--plot-user",  type=int, default=0)
     args = parser.parse_args()
 

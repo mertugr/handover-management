@@ -15,10 +15,10 @@ import config
 from simulation.mobility  import MobileUser
 from simulation.rssi      import rssi_all_cells, best_cell_by_rssi
 from simulation.cell_grid import NUM_CELLS
+from handover.threshold_handover import ThresholdHandoverController
 from config import NUM_USERS, NUM_STEPS, BURN_IN, LOOKAHEAD, RANDOM_SEED
 
-RSSI_COLS  = [f"rssi_{i}"       for i in range(NUM_CELLS)]
-TREND_COLS = [f"rssi_trend_{i}" for i in range(NUM_CELLS)]
+RSSI_COLS = [f"rssi_{i}" for i in range(NUM_CELLS)]
 
 SAVE_PATH = os.path.join(os.path.dirname(__file__), "traces.csv")
 META_PATH = SAVE_PATH + ".meta.json"
@@ -40,6 +40,11 @@ _FINGERPRINT_KEYS = (
     "MIN_RSSI", "MAX_RSSI", "MIN_DISTANCE",
     # Dataset shape
     "NUM_USERS", "NUM_STEPS", "BURN_IN", "LOOKAHEAD",
+    # Threshold controller knobs (now baked into `current_cell` of the training
+    # data, so changing them must invalidate the cache).
+    "THR_HYSTERESIS_DB", "THR_TTT_STEPS",
+    # Feature schema version (bump invalidates cache when columns change)
+    "DATASET_SCHEMA_VERSION",
 )
 
 
@@ -75,14 +80,25 @@ def _simulate_user(uid: int) -> list[dict]:
         })
         user.step()
 
-    # Build the final feature records
+    # Run the threshold (A3-event) controller through the RSSI trace to obtain
+    # a realistic `current_cell` trajectory. If we used the noiseless optimal
+    # cell instead, training current_cell would always equal next_cell with
+    # very high probability and the RF would learn a "stay put" shortcut that
+    # collapses at inference time (distribution mismatch). The threshold
+    # served-cell sequence is a faithful proxy for what any practical handover
+    # controller — including the ML one — actually serves.
+    thr_ctrl = ThresholdHandoverController()
+    thr_ctrl.reset(initial_cell=history[0]["cell"], user_id=uid)
+    served_cells = np.zeros(NUM_STEPS + LOOKAHEAD, dtype=np.int64)
+    for t in range(NUM_STEPS + LOOKAHEAD):
+        served_cells[t], _ = thr_ctrl.process_step(t, history[t]["rssi"])
+
+    # Build the final feature records (proposal feature set:
+    # current cell ID, speed, movement direction, RSSI values)
     records = []
     for t in range(NUM_STEPS):
         h        = history[t]
-        h_prev   = history[t - 1] if t > 0 else history[t]
         h_future = history[t + LOOKAHEAD]
-
-        rssi_trend = h["rssi"] - h_prev["rssi"]
 
         record = {
             "user_id":       uid,
@@ -90,15 +106,19 @@ def _simulate_user(uid: int) -> list[dict]:
             "x":             h["x"],
             "y":             h["y"],
             "speed":         h["speed"],
-            # Direction encoded as sin/cos to avoid 0/360 discontinuity
+            # Direction encoded as sin/cos so the RF can split it without a
+            # 0/2pi wraparound discontinuity (still one "direction" feature).
             "direction_sin": float(np.sin(h["direction"])),
             "direction_cos": float(np.cos(h["direction"])),
-            "current_cell":  h["cell"],
+            # `current_cell` is the controller's served cell at t (RF feature).
+            # `optimal_cell` is the noiseless best-by-RSSI cell at t (ground
+            # truth used for evaluation; never fed to the model).
+            "current_cell":  int(served_cells[t]),
+            "optimal_cell":  int(h["cell"]),
             "next_cell":     h_future["cell"],  # supervised label
         }
         for i in range(NUM_CELLS):
-            record[RSSI_COLS[i]]  = float(h["rssi"][i])
-            record[TREND_COLS[i]] = float(rssi_trend[i])
+            record[RSSI_COLS[i]] = float(h["rssi"][i])
 
         records.append(record)
 
@@ -135,9 +155,9 @@ def generate_dataset(save: bool = True) -> pd.DataFrame:
 def load_or_generate(force_regenerate: bool = False) -> pd.DataFrame:
     """Load cached traces.csv if it exists, otherwise generate it.
 
-    The cache is invalidated automatically when any config constant that
-    affects the dataset shape (NUM_USERS, NUM_STEPS, BURN_IN, LOOKAHEAD,
-    NUM_CELLS, RANDOM_SEED) changes.
+    The cache is invalidated automatically when any constant listed in
+    _FINGERPRINT_KEYS changes (grid, mobility, RSSI, dataset shape,
+    threshold-controller knobs, or DATASET_SCHEMA_VERSION).
     """
     if not force_regenerate and os.path.exists(SAVE_PATH):
         cached_fp = None

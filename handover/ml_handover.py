@@ -1,17 +1,20 @@
 """
 ML-based proactive handover controller.
 
-Uses a trained Random Forest to predict the next-best serving cell from
-speed, direction, RSSI snapshot, RSSI trend, and the current cell. A
-handover is triggered only if all of the following hold:
-  * the predicted cell is not the current cell
-  * confidence >= ML_CONFIDENCE_THRESHOLD
-  * target RSSI - serving RSSI >= ML_MIN_GAIN_DB
-  * cooldown has elapsed since the previous handover
-  * the target is not a bounceback within ML_BOUNCEBACK_WINDOW
+Primary trigger (proposal §2): trigger HO when the RF prediction's confidence
+exceeds the configured threshold. Three engineering safeguards prevent the
+controller from acting on obviously harmful predictions — these do not relax
+the proposal's rule, they just refuse to commit when the resulting HO would
+be (a) marginal in gain, (b) immediately after another HO, or (c) a
+bounceback to the cell we just left. A practical handover controller needs
+these the same way the threshold baseline needs hysteresis + TTT.
 
-The ML-based strategy is compared with the threshold A3-event baseline
-by running both controllers over the same RSSI trace.
+Gates applied at every step (all must hold to trigger HO):
+  * pred_cell != current_cell
+  * confidence >= ML_CONFIDENCE_THRESHOLD     ← proposal trigger
+  * target RSSI - serving RSSI >= ML_MIN_GAIN_DB
+  * (t - last_ho_time) >= ML_COOLDOWN_STEPS
+  * target != previously-left cell within ML_BOUNCEBACK_WINDOW steps
 """
 
 from __future__ import annotations
@@ -41,13 +44,13 @@ class MLHandoverController:
         self.user_id                  = None
         self.log: list[dict]          = []
 
-        self._last_ho_time:      int   = -10 ** 9
-        self._last_source_cell:  int   = -1
-        self._last_source_time:  int   = -10 ** 9
+        self._last_ho_time:     int = -10 ** 9
+        self._last_source_cell: int = -1
+        self._last_source_time: int = -10 ** 9
 
-        # Filled in by precompute(); required before process_step().
-        self._cached_preds: np.ndarray | None = None
-        self._cached_confs: np.ndarray | None = None
+        # Pre-computed prediction table indexed by [t, current_cell].
+        self._pred_table: np.ndarray | None = None
+        self._conf_table: np.ndarray | None = None
 
     def reset(self, initial_cell: int = 0, user_id=None):
         self.current_cell       = initial_cell
@@ -56,20 +59,20 @@ class MLHandoverController:
         self._last_ho_time      = -10 ** 9
         self._last_source_cell  = -1
         self._last_source_time  = -10 ** 9
-        self._cached_preds      = None
-        self._cached_confs      = None
+        self._pred_table        = None
+        self._conf_table        = None
 
     def precompute(self, speeds: np.ndarray, directions_rad: np.ndarray,
                    rssi_matrix: np.ndarray) -> None:
-        """Batch-predict next-cell + confidence for the full user trace.
+        """Pre-compute (pred_cell, confidence) for every (t, current_cell) pair.
 
-        Must be called after reset() and before the first process_step(). RF
-        per-row inference is ~14 ms; one batch call is ~100x faster, with
-        bit-identical results because the mobility trace is independent of
-        handover decisions. RF-specific optimization — other controllers
-        (threshold, RL) do not need an analogue.
+        Because `current_cell` is now an input feature, the controller's
+        served cell is dynamic and we can no longer batch-predict the whole
+        trace under a single current_cell. predictor.predict_table() runs
+        NUM_CELLS batch calls so process_step() is O(1) lookup. Math is
+        identical to per-step inference.
         """
-        self._cached_preds, self._cached_confs = self.predictor.predict_batch(
+        self._pred_table, self._conf_table = self.predictor.predict_table(
             speeds, directions_rad, rssi_matrix
         )
 
@@ -79,7 +82,7 @@ class MLHandoverController:
         Evaluate the ML handover decision at step t.
         Returns (serving_cell, handover_occurred).
         """
-        if self._cached_preds is None:
+        if self._pred_table is None:
             raise RuntimeError(
                 "MLHandoverController.precompute() must be called after "
                 "reset() and before the first process_step()."
@@ -88,18 +91,18 @@ class MLHandoverController:
         if self.current_cell is None:
             self.current_cell = int(np.argmax(rssi))
 
-        pred_cell = int(self._cached_preds[t])
-        conf      = float(self._cached_confs[t])
+        pred_cell = int(self._pred_table[t, self.current_cell])
+        conf      = float(self._conf_table[t, self.current_cell])
 
         ho_occurred = False
 
         if pred_cell != self.current_cell:
-            gain_db      = float(rssi[pred_cell] - rssi[self.current_cell])
-            cooldown_ok  = (t - self._last_ho_time) >= self.cooldown
-            confident    = conf >= self.conf_threshold
-            gain_ok      = gain_db >= self.min_gain_db
-            bounceback   = (pred_cell == self._last_source_cell
-                            and (t - self._last_source_time) < self.bounceback_window)
+            gain_db     = float(rssi[pred_cell] - rssi[self.current_cell])
+            confident   = conf >= self.conf_threshold       # proposal trigger
+            cooldown_ok = (t - self._last_ho_time) >= self.cooldown
+            gain_ok     = gain_db >= self.min_gain_db
+            bounceback  = (pred_cell == self._last_source_cell
+                           and (t - self._last_source_time) < self.bounceback_window)
 
             if confident and gain_ok and cooldown_ok and not bounceback:
                 self.log.append({

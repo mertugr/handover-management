@@ -49,12 +49,20 @@ RF_MIN_SAMPLES_LEAF = 4
 THR_HYSTERESIS_DB = 3.0  # dB margin required to trigger handover
 THR_TTT_STEPS     = 3    # consecutive steps condition must hold (TTT)
 
-# ML controller
-ML_CONFIDENCE_THRESHOLD = 0.60  # minimum prediction confidence to trigger HO
-ML_COOLDOWN_STEPS       = 10    # steps blocked after a handover
-ML_MIN_GAIN_DB          = 4.0   # minimum RSSI gain required (dB)
-ML_BOUNCEBACK_WINDOW    = 20    # steps before returning to previous cell is allowed
+# ML controller. Proposal's primary trigger is the confidence threshold; the
+# other three are engineering safeguards (any practical handover controller
+# needs them — including the threshold baseline, which has hysteresis + TTT
+# as its own form of cooldown). They do NOT relax the "confidence > threshold"
+# rule, only refuse to act when the resulting HO would obviously be harmful.
+ML_CONFIDENCE_THRESHOLD = 0.35  # minimum prediction confidence to trigger HO
+ML_COOLDOWN_STEPS       = 10    # steps blocked after a handover (anti-flap)
+ML_MIN_GAIN_DB          = 4.0   # min instantaneous RSSI gain (sanity check)
+ML_BOUNCEBACK_WINDOW    = 20    # steps before returning to previous cell allowed
 
 # Train / val / test split
 SPLIT_TEST_SIZE = 0.20
 SPLIT_VAL_SIZE  = 0.10
+
+# Dataset schema version. Bump whenever the feature column set changes so the
+# cached traces.csv is regenerated automatically.
+DATASET_SCHEMA_VERSION = 4

@@ -1,22 +1,17 @@
 """
 Feature extraction for the Random Forest handover predictor.
 
-The feature vector matches the dataset columns written by
-data.mock_data_generator so the RF model can be trained offline from CSV
-and queried online inside the ML handover controller.
+Feature set follows the project proposal: current cell ID, user speed,
+movement direction, and RSSI values from every base station. The feature
+vector matches the dataset columns written by data.mock_data_generator so
+the RF model can be trained offline from CSV and queried online inside the
+ML handover controller.
 
-Feature layout (length = 3 + 2*NUM_CELLS):
-    speed, direction_sin, direction_cos,
-    rssi_0 ... rssi_{N-1},
-    rssi_trend_0 ... rssi_trend_{N-1}
-
-Note on current_cell: the raw trace includes a `current_cell` column, but it
-is NOT used as a feature. At training time the recorded current_cell is
-always the noiseless optimal cell (best_cell_by_rssi with no shadowing),
-while at inference time the ML controller may be serving a stale cell. Mixing
-those two semantics teaches the RF to echo current_cell, so the controller
-learns to "stay put" even when it shouldn't. Dropping it fixes that
-distribution shift; the RSSI vector already encodes which cell is strongest.
+Feature layout (length = 4 + NUM_CELLS = 13 for a 3x3 grid):
+    current_cell,
+    speed,
+    direction_sin, direction_cos,   # one "direction" feature, sin/cos encoded
+    rssi_0 ... rssi_{N-1}
 """
 
 from __future__ import annotations
@@ -26,16 +21,18 @@ import pandas as pd
 
 from simulation.cell_grid import NUM_CELLS
 
-RSSI_COLS  = [f"rssi_{i}"       for i in range(NUM_CELLS)]
-TREND_COLS = [f"rssi_trend_{i}" for i in range(NUM_CELLS)]
+RSSI_COLS = [f"rssi_{i}" for i in range(NUM_CELLS)]
 
 FEATURE_COLS: list[str] = (
-    ["speed", "direction_sin", "direction_cos"]
+    ["current_cell", "speed", "direction_sin", "direction_cos"]
     + RSSI_COLS
-    + TREND_COLS
 )
 
 LABEL_COL = "next_cell"
+
+# Index of `current_cell` inside the feature vector (used by the controller
+# to swap in its served cell at inference time without rebuilding the row).
+CURRENT_CELL_IDX = 0
 
 
 def build_feature_matrix(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
@@ -49,20 +46,18 @@ def build_feature_matrix(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     return X, y
 
 
-def build_feature_vector(speed: float, direction_rad: float,
-                         rssi: np.ndarray, rssi_prev: np.ndarray) -> np.ndarray:
+def build_feature_vector(current_cell: int, speed: float,
+                         direction_rad: float, rssi: np.ndarray) -> np.ndarray:
     """Build one feature row for online inference (ML handover controller)."""
-    if rssi.shape != (NUM_CELLS,) or rssi_prev.shape != (NUM_CELLS,):
+    if rssi.shape != (NUM_CELLS,):
         raise ValueError(
-            f"RSSI arrays must have shape ({NUM_CELLS},); "
-            f"got rssi={rssi.shape}, rssi_prev={rssi_prev.shape}"
+            f"RSSI array must have shape ({NUM_CELLS},); got {rssi.shape}"
         )
 
-    trend = rssi - rssi_prev
     vec = np.empty(len(FEATURE_COLS), dtype=np.float64)
-    vec[0] = float(speed)
-    vec[1] = float(np.sin(direction_rad))
-    vec[2] = float(np.cos(direction_rad))
-    vec[3:3 + NUM_CELLS]                = rssi
-    vec[3 + NUM_CELLS:3 + 2 * NUM_CELLS] = trend
+    vec[0] = float(current_cell)
+    vec[1] = float(speed)
+    vec[2] = float(np.sin(direction_rad))
+    vec[3] = float(np.cos(direction_rad))
+    vec[4:4 + NUM_CELLS] = rssi
     return vec

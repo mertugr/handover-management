@@ -148,42 +148,43 @@ def plot_handover_timeline(served_thr: np.ndarray,
 
 
 def plot_metric_comparison(thr_metrics, ml_metrics):
-    """Grouped bar chart comparing Threshold and ML metrics."""
+    """One small bar panel per metric so different scales don't crush each other."""
     metric_pairs = [
-        ("Ping-Pong\nCount",         "ping_pong_count"),
-        ("Unnecessary\nHO Count",    "unnecessary_count"),
-        ("Total\nInterruption (ms)", "total_interruption_ms"),
-        ("HO Rate\n(per 100 steps)", "ho_rate_per_100_steps"),
-        ("Success\nRate (%)",        "success_rate_pct"),
+        ("Success Rate (%)",          "success_rate_pct",        "higher better"),
+        ("Ping-Pong Count",           "ping_pong_count",         "lower better"),
+        ("Unnecessary HO Count",      "unnecessary_count",       "lower better"),
+        ("Total Handovers",           "total_handovers",         "lower better"),
+        ("HO Rate / 100 steps",       "ho_rate_per_100_steps",   "lower better"),
+        ("Total Interruption (ms)",   "total_interruption_ms",   "lower better"),
     ]
-    labels   = [m[0] for m in metric_pairs]
-    thr_vals = [getattr(thr_metrics, m[1]) for m in metric_pairs]
-    ml_vals  = [getattr(ml_metrics,  m[1]) for m in metric_pairs]
 
-    x     = np.arange(len(labels))
-    width = 0.38
+    n     = len(metric_pairs)
+    cols  = 3
+    rows  = (n + cols - 1) // cols
+    fig, axes = plt.subplots(rows, cols, figsize=(13, 4 * rows))
+    axes = axes.flatten()
 
-    fig, ax = plt.subplots(figsize=(12, 5))
-    bars_t = ax.bar(x - width / 2, thr_vals, width,
-                    label="Threshold", color="tomato", alpha=0.85)
-    bars_m = ax.bar(x + width / 2, ml_vals,  width,
-                    label="ML-Based",  color="steelblue", alpha=0.85)
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, fontsize=10)
-    ax.set_ylabel("Value")
-    ax.set_title("Threshold vs ML Handover – Performance Metrics",
-                 fontsize=12, fontweight="bold")
-    ax.legend(fontsize=10)
-    ax.grid(axis="y", linewidth=0.4, alpha=0.5)
-
-    for bars in (bars_t, bars_m):
+    for ax, (label, attr, hint) in zip(axes, metric_pairs):
+        thr_v = getattr(thr_metrics, attr)
+        ml_v  = getattr(ml_metrics,  attr)
+        bars  = ax.bar(["Threshold", "ML-Based"], [thr_v, ml_v],
+                       color=["tomato", "steelblue"], alpha=0.85, width=0.55)
+        ax.set_title(f"{label}\n({hint})", fontsize=10, fontweight="bold")
+        ax.grid(axis="y", linewidth=0.4, alpha=0.5)
+        ax.margins(y=0.18)
         for bar in bars:
             h = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width() / 2, h + 0.3,
-                    f"{h:.1f}", ha="center", va="bottom", fontsize=7)
+            ax.text(bar.get_x() + bar.get_width() / 2, h,
+                    f"{h:.2f}" if isinstance(h, float) and h % 1 else f"{int(h)}",
+                    ha="center", va="bottom", fontsize=9)
 
-    plt.tight_layout()
+    # Hide any unused panel(s).
+    for ax in axes[len(metric_pairs):]:
+        ax.axis("off")
+
+    fig.suptitle("Threshold vs ML Handover – Performance Metrics",
+                 fontsize=13, fontweight="bold")
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
     _savefig("04_metric_comparison", fig)
 
 

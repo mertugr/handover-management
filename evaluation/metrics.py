@@ -9,9 +9,11 @@ from dataclasses import dataclass, asdict
 
 PING_PONG_WINDOW_S     = 10   # handback within this many seconds counts as ping-pong
 INTERRUPTION_MS_PER_HO = 50   # estimated interruption per handover (ms)
-# A handover whose RSSI gain barely exceeds the 3 dB baseline hysteresis was
-# likely triggered by shadowing noise (sigma = 8 dB) rather than a real move,
-# so any HO with gain below this threshold is flagged as unnecessary.
+# An HO whose RSSI gain barely exceeds the 3 dB baseline hysteresis was likely
+# triggered by shadowing noise (sigma = 8 dB) rather than a real cell change.
+# Both controllers are evaluated with the same gain threshold so the metric is
+# symmetric — the ML controller's ML_MIN_GAIN_DB safeguard already filters
+# most noise-only HOs, so this number stays low for ML by design.
 UNNECESSARY_GAIN_DB    = 5.0
 
 
@@ -59,7 +61,9 @@ def compute_metrics(log: list[dict], total_steps: int,
     if m.total_handovers > 0:
         m.ping_pong_rate_pct = m.ping_pong_count / m.total_handovers * 100.0
 
-    # Unnecessary: RSSI gain was too small to justify the handover
+    # Unnecessary: HO whose RSSI gain at trigger time is below UNNECESSARY_GAIN_DB.
+    # Symmetric across controllers — ML's ML_MIN_GAIN_DB gate ensures most ML
+    # HOs clear this bar by construction; threshold's noise-triggered HOs do not.
     for entry in log:
         if entry.get("gain_db", 0.0) < UNNECESSARY_GAIN_DB:
             m.unnecessary_count += 1
